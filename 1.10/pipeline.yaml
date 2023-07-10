@@ -14,6 +14,7 @@ spec:
       description: CP4S version
       default: "1.10"
     - name: ibm-entitlement-key
+      description: IBM entitlement key. If not set, will use secret manger. 
       type: string
       default: "false"
   tasks:
