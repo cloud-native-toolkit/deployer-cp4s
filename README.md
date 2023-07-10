@@ -4,7 +4,7 @@ This repository contains a set of Tekton pipelines to deploy IBM Cloud Pak for S
 
 ## Prerequisites
 
-An IBM Technology Zone `deployer` cluster is assumed to be configured with an appropriate Red Hat OpenShift version for the Cloud Pak for Integration version you wish to deploy, with appropriate sizing. Refer to [IBM Cloud Pak for Integration documentation](https://www.ibm.com/docs/en/cloud-paks/cp-integration/2022.4) for more information.
+An IBM Technology Zone `deployer` cluster is assumed to be configured with an appropriate Red Hat OpenShift version for the Cloud Pak for Security version you wish to deploy, with appropriate sizing. Refer to [IBM Cloud Pak for Security documentation](https://www.ibm.com/docs/en/cloud-paks/cp-security/1.10) for more information.
 
 A `deployer` cluster is configured with the following items:
 
