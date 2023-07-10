@@ -1,4 +1,4 @@
-# Techzone Deployer Cloud Pak for Securitypipelines
+# Techzone Deployer Cloud Pak for Security pipelines
 
 This repository contains a set of Tekton pipelines to deploy IBM Cloud Pak for Security in an IBM Technology Zone `deployer` cluster.
 
