@@ -1,0 +1,351 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: cp4s-deploy
+spec:
+  params:
+    - name: namespace
+      type: string
+      description: Namespace for CP4S deployment
+      default: "cp4s-deploy"
+    - name: cp4s-version
+      type: string
+      description: CP4S version
+      default: "1.10"
+    - name: ibm-entitlement-key
+      type: string
+      default: "false"
+  tasks:
+    - name: install-serverless
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            ---
+            apiVersion: v1
+            kind: Namespace
+            metadata:
+              name: openshift-serverless
+            ---
+            apiVersion: operators.coreos.com/v1
+            kind: OperatorGroup
+            metadata:
+              name: serverless-operators
+              namespace: openshift-serverless
+            spec: {}
+            ---
+            apiVersion: operators.coreos.com/v1alpha1
+            kind: Subscription
+            metadata:
+              name: serverless-operator
+              namespace: openshift-serverless
+            spec:
+              channel: stable 
+              name: serverless-operator 
+              source: redhat-operators 
+              sourceNamespace: openshift-marketplace 
+            EOF
+    - name: wait-for-serverless-crd
+      runAfter:
+        - install-serverless
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              #!/usr/bin/env bash
+              serverlessCSV=$(oc get csv -o=custom-columns=NAME:.metadata.name | grep serverless)
+              while [[ "$serverlessCSV" == "" ]]
+              do 
+                  echo "Waiting for crd to install..."
+                  serverlessCSV=$(oc get csv -o=custom-columns=NAME:.metadata.name | grep serverless)
+                  sleep 5
+              done
+              echo "crd installed!"
+              status=$(oc get csv/$serverlessCSV -o=custom-columns=PHASE:.status.phase --no-headers)
+              while [[ "$status" != "Succeeded" ]]
+              do
+                  status=$(oc get csv/$serverlessCSV -o=custom-columns=PHASE:.status.phase --no-headers)
+                  echo "Waiting for crd to reach success status..."
+                  sleep 15
+              done
+    - name: install-knative-serving
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      runAfter:
+        - wait-for-serverless-crd
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            apiVersion: operator.knative.dev/v1beta1
+            kind: KnativeServing
+            metadata:
+                name: knative-serving
+                namespace: knative-serving
+            spec:
+                high-availability:
+                    replicas: 2
+            EOF
+    - name: add-namespace
+      runAfter:
+        - install-knative-serving
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF 
+            kind: Namespace
+            apiVersion: v1
+            metadata:
+              name: $(params.namespace)
+            EOF
+    - name: get-ibm-entitlement-key
+      params:
+        - name: KEY_ID
+          value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+      taskRef:
+        kind: Task
+        name: ibmcloud-secrets-manager-get
+    - name: set-retrieved-entitlement-key
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: in
+          values: ["false"]
+      runAfter:
+        - get-ibm-entitlement-key
+        - add-namespace
+      params:
+        - name: ibm-entitlement-key
+          value: $(tasks.get-ibm-entitlement-key.results.secret-value)
+        - name: namespace
+          value: "$(params.namespace)"
+      taskSpec:
+        params:
+          - name: ibm-entitlement-key
+          - name: namespace
+        steps:
+          - name: set-entitlement-key
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              oc get secret "ibm-entitlement-key" -n $(params.namespace)
+              if [ $? -eq 0 ]; then
+                  echo "Deleting existing secret..."
+                  oc delete secrets "ibm-entitlement-key" -n $(params.namespace)
+              fi
+              oc create secret docker-registry "ibm-entitlement-key" -n $(params.namespace) "--docker-server=cp.icr.io" "--docker-username=cp" "--docker-password=$(params.ibm-entitlement-key)"
+    - name: set-provided-entitlement-key
+      runAfter:
+        - add-namespace
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: notin
+          values: ["false"]
+      params:
+        - name: ibm-entitlement-key
+          value: "$(params.ibm-entitlement-key)"
+        - name: namespace
+          value: "$(params.namespace)"
+      taskSpec:
+        params:
+          - name: ibm-entitlement-key
+          - name: namespace
+        steps:
+          - name: set-entitlement
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              oc get secret "ibm-entitlement-key" -n $(params.namespace)
+              if [ $? -eq 0 ]; then
+                  echo "Deleting existing secret..."
+                  oc delete secrets "ibm-entitlement-key" -n $(params.namespace)
+              fi
+              oc create secret docker-registry "ibm-entitlement-key" -n $(params.namespace) "--docker-server=cp.icr.io" "--docker-username=cp" "--docker-password=$(params.ibm-entitlement-key)"
+    - name: install-operator-catalog
+      runAfter:
+        - set-provided-entitlement-key
+        - set-retrieved-entitlement-key
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+            oc apply -f - <<EOF
+            apiVersion: operators.coreos.com/v1alpha1
+            kind: CatalogSource
+            metadata:
+                name: ibm-operator-catalog
+                namespace: openshift-marketplace
+            spec:
+                displayName: ibm-operator-catalog
+                publisher: IBM Content
+                sourceType: grpc
+                image: icr.io/cpopen/ibm-operator-catalog
+                updateStrategy:
+                    registryPoll:
+                      interval: 45m
+            EOF
+    - name: wait-for-operator
+      runAfter:
+        - install-operator-catalog
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              status=$(oc get pod -lolm.catalogSource=ibm-operator-catalog -n openshift-marketplace -o=custom-columns=STATUS:.status.phase --no-headers)
+
+              while [[ "$status" != "Running" ]]
+              do
+                  status=$(oc get pod -lolm.catalogSource=ibm-operator-catalog -n openshift-marketplace -o=custom-columns=STATUS:.status.phase --no-headers)
+                  echo "Waiting for catalog to install..."
+                  sleep 15
+              done
+    - name: install-cp4s-operator
+      runAfter:
+        - wait-for-operator
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              #!/usr/bin/env bash
+              oc apply -f - <<EOF 
+              apiVersion: operators.coreos.com/v1
+              kind: OperatorGroup
+              metadata:
+                   name: cp4s-operator-group
+                   namespace: $(params.namespace)
+              spec:
+                   targetNamespaces:
+                      - $(params.namespace)
+              EOF
+    - name: install-cp4s-subscription
+      runAfter:
+        - install-cp4s-operator
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              oc apply -f - <<EOF 
+              apiVersion: operators.coreos.com/v1alpha1
+              kind: Subscription
+              metadata:
+                   name: ibm-cp-security-operator
+                   namespace: $(params.namespace)
+              spec:
+                   channel: v1.10
+                   installPlanApproval: Automatic
+                   name: ibm-cp-security-operator
+                   source: ibm-operator-catalog
+                   sourceNamespace: openshift-marketplace
+              EOF
+    - name: wait-for-cp4s-operator
+      runAfter:
+        - install-cp4s-subscription
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              #!/usr/bin/env bash
+              deployStatus=$(oc get pod -lname=ibm-cp-security-operator -n cp4s-deploy -o=custom-columns=STATUS:.status.phase --no-headers)
+
+              while [[ "$deployStatus" != "Running" ]]
+              do
+                  echo "Waiting on operator to start..."
+                  deployStatus=$(oc get pod -lname=ibm-cp-security-operator -n cp4s-deploy -o=custom-columns=STATUS:.status.phase --no-headers)
+                  sleep 10
+              done
+              echo "Operator started!"
+    - name: install-cp4s-threat-management
+      runAfter:
+        - wait-for-cp4s-operator
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              oc apply -f - <<EOF 
+              apiVersion: isc.ibm.com/v1
+              kind: CP4SThreatManagement
+              metadata:
+                   name: threatmgmt
+                   namespace: $(params.namespace)
+              spec:
+                   acceptLicense: true
+                   basicDeploymentConfiguration:
+                       adminUser: cp4s-admin
+                       domain: ""
+                       storageClass: ""
+                   extendedDeploymentConfiguration:
+                       airgapInstall: false
+                       clusterProxy: false
+                       backupStorageClass: ""
+                       backupStorageSize: ""
+                       imagePullPolicy: IfNotPresent
+                       repository: cp.icr.io/cp/cp4s
+                       repositoryType: entitled
+                       roksAuthentication: false
+                       CSNamespace: ibm-common-services
+                   threatManagementCapabilities:
+                       deployDRC: true
+                       deployRiskManager: true
+                       deployThreatInvestigator: true
+              EOF
+    - name: wait-for-threat-management
+      runAfter:
+        - install-cp4s-threat-management
+      timeout: "3h15m"
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              #!/usr/bin/env bash
+              status=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.status.conditions}' | jq '.[0].type')
+
+              while [[ "$status" != '"Success"' ]]
+              do
+                status=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.status.conditions}' | jq '.[0].type')
+                echo "Waiting for Threat Management to install. This could take up to an hour and a half..."
+                sleep 120   
+              done
+
+              echo "CP4S installed!"
+    - name: login-credential
+      runAfter:
+        - wait-for-threat-management
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              CP4S_NAMESPACE=$(params.namespace)
+              FS_NAMESPACE=$(oc get cm cp4s-config -o jsonpath="{.data.CSNamespace}" -n $CP4S_NAMESPACE)
+              url=$(oc get routes cp-console -n $FS_NAMESPACE -o jsonpath='{.spec.host}' | awk '{print $1}')
+              username=$(oc get secret platform-auth-idp-credentials -o jsonpath='{.data.admin_username}' -n $FS_NAMESPACE | base64 -d | awk '{print $1}')
+              password=$(oc get secret platform-auth-idp-credentials -o jsonpath='{.data.admin_password}' -n $FS_NAMESPACE | base64 -d | awk '{print $1}')
+
+              printf "URL: $url \nUsername: $username\nPassword: $password\n"

@@ -1,0 +1,15 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: cp4s-deployer-run
+spec:
+  timeout: 6h0m0s
+  pipelineRef:
+    name: cp4s-deploy
+  params:
+    - name: namespace
+      value: "cp4s-deploy"
+    - name: ibm-entitlement-key
+      value: "false"
+    - name: cp4s-version
+      value: "1.10"
