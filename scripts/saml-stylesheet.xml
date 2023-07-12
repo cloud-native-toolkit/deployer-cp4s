@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- saml-stylesheet.xml v1.5 David Druker, IBM, 2022-07-10 -->
+<!-- Process SAML metadata on MacOS or Linux with this command: -->
+  <!-- xsltproc saml-stylesheet.xml <SAML metatdata file.xml> -->
+
+<xsl:stylesheet version="1.0"
+    xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+    xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+    xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+  <xsl:output method="text" />
+  <xsl:strip-space elements="*" />
+  <xsl:variable name="newline"><xsl:text>&#xa;</xsl:text></xsl:variable>
+
+  <xsl:template match="ds:X509Certificate">
+    <!-- Write signer certificate pem file  -->
+    <xsl:document href="signer.pem" omit-xml-declaration="yes">
+      <xsl:if test="ancestor::md:KeyDescriptor[@use='signing']">
+        <xsl:value-of select="concat('-----BEGIN CERTIFICATE-----',$newline)" />
+        <xsl:apply-templates />
+        <xsl:value-of select="concat($newline,'-----END CERTIFICATE-----')" />
+      </xsl:if>
+    </xsl:document>
+    <!-- Write encryption certificate pem file  -->
+    <xsl:document href="encryption.pem" omit-xml-declaration="yes">
+      <xsl:if test="ancestor::md:KeyDescriptor[@use='encryption']">
+        <xsl:value-of select="concat('-----BEGIN CERTIFICATE-----',$newline)" />
+        <xsl:apply-templates />
+        <xsl:value-of select="concat($newline,'-----END CERTIFICATE-----')" />
+      </xsl:if>
+    </xsl:document>   
+  </xsl:template>
+
+  <!-- Write Entity reference (Provider ID) into text file -->
+  <xsl:template match="md:EntityDescriptor">
+    <xsl:document href="entity.url" omit-xml-declaration="yes">
+      <xsl:value-of select="@entityID"/>
+      <xsl:apply-templates/>
+    </xsl:document>
+  </xsl:template>
+
+  <!-- Write ACS URL into text file -->
+  <xsl:template match="md:AssertionConsumerService">
+    <xsl:document href="acs.url" omit-xml-declaration="yes">
+      <xsl:value-of select="@Location"/>
+      <xsl:apply-templates/>
+    </xsl:document>
+  </xsl:template>
+
+</xsl:stylesheet>
