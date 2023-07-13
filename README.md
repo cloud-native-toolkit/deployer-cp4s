@@ -6,7 +6,7 @@ This repository contains a set of Tekton pipelines to deploy IBM Cloud Pak for S
 You will need an instance of [IBM Verify](https://www.ibm.com/products/verify-identity). Once you have an instance of verify, you will need the API access. Grab the Client ID and Client secret for Verify. 
 
 To obtain a client_id and client_secret from your Verify instance.
-- If an API Client does not exist, create one. For more information, see (API Access)[https://docs.verify.ibm.com/verify/docs/native-applications?_gl=1*1t9rkn2*_ga*MTk1NDg5NjUzNi4xNjg5MjUyMTEx*_ga_FYECCCS21D*MTY4OTI1MjExMS4xLjEuMTY4OTI1MjM5Ny4wLjAuMA..]
+- If an API Client does not exist, create one. For more information, see [API Access](https://docs.verify.ibm.com/verify/docs/native-applications?_gl=1*1t9rkn2*_ga*MTk1NDg5NjUzNi4xNjg5MjUyMTEx*_ga_FYECCCS21D*MTY4OTI1MjExMS4xLjEuMTY4OTI1MjM5Ny4wLjAuMA..)
 - Go to Security > API Access and click the edit icon for the API client.
 - Under API credentials, copy and store the Client ID and Client secret values.
 
