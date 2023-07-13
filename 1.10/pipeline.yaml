@@ -8,7 +8,7 @@ spec:
     - name: namespace
       type: string
       description: Namespace for CP4S deployment
-      default: "cp4s-deploy"
+      default: "cp4s"
     - name: cp4s-version
       type: string
       description: CP4S version
@@ -17,7 +17,33 @@ spec:
       description: IBM entitlement key. If not set, will use secret manger. 
       type: string
       default: "false"
+    - name: verify-url
+      description: (Required) IBM Security Verify URL
+      type: string
+    - name: verify-client-id
+      description: (Required) IBM Security Verify Client ID 
+      type: string
+    - name: verify-client-secret
+      description: (Required) IBM Security Verify Client secret  
+      type: string
+    - name: verify-admin-user
+      description: (Required) Admin user email
+      type: string
   tasks:
+    - name: get-sources
+      taskSpec:
+        steps:
+        - name: git-clone-step
+          image: alpine/git
+          args:
+            - clone
+            - "https://github.com/cloud-native-toolkit/deployer-cp4s.git"
+            - "$(workspaces.ws.path)/cp4s-source"
+        workspaces:
+          - name: ws
+      workspaces:
+        - name: ws
+          workspace: cp4s-ws
     - name: install-serverless
       taskRef:
         kind: Task
@@ -268,12 +294,12 @@ spec:
         - name: SCRIPT
           value: |-
               #!/usr/bin/env bash
-              deployStatus=$(oc get pod -lname=ibm-cp-security-operator -n cp4s-deploy -o=custom-columns=STATUS:.status.phase --no-headers)
+              deployStatus=$(oc get pod -lname=ibm-cp-security-operator -n $(params.namespace) -o=custom-columns=STATUS:.status.phase --no-headers)
 
               while [[ "$deployStatus" != "Running" ]]
               do
                   echo "Waiting on operator to start..."
-                  deployStatus=$(oc get pod -lname=ibm-cp-security-operator -n cp4s-deploy -o=custom-columns=STATUS:.status.phase --no-headers)
+                  deployStatus=$(oc get pod -lname=ibm-cp-security-operator -n $(params.namespace) -o=custom-columns=STATUS:.status.phase --no-headers)
                   sleep 10
               done
               echo "Operator started!"
@@ -295,7 +321,7 @@ spec:
               spec:
                    acceptLicense: true
                    basicDeploymentConfiguration:
-                       adminUser: cp4s-admin
+                       adminUser: $(params.verify-admin-user)
                        domain: ""
                        storageClass: ""
                    extendedDeploymentConfiguration:
@@ -334,9 +360,195 @@ spec:
               done
 
               echo "CP4S installed!"
-    - name: login-credential
+    - name: update-certs
       runAfter:
         - wait-for-threat-management
+      timeout: "3h15m"
+      params:
+        - name: namespace
+          value: "$(params.namespace)"
+      taskSpec:
+        params:
+          - name: namespace
+        steps:
+          - name: set-entitlement
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              mkdir ~/hostname_update
+
+              cd ~/hostname_update
+
+
+              echo "Creating script to update certificates for common-services"
+
+              cat <<EOF > hostname_update.sh
+
+              echo "Checking all the pre-reqs"
+
+
+              echo "Checking for an authenticated oc CLI..."
+
+              TOKENS=$(oc whoami >/dev/null 2>&1)
+
+              if [ $? -eq 1 ]
+
+              then
+                echo "You must be logged in with oc first"
+                exit 1
+              else
+                echo "Authenticated oc CLI found"
+              fi
+
+
+              echo "Checking for tls.crt..."
+
+              if [ ! -f "./tls.crt" ]
+
+              then
+                echo "No tls.crt found"
+                echo "Please put the TLS certificate in tls.crt in the current directory"
+                exit 1
+              else
+                echo "Found tls.crt"
+              fi
+
+
+              echo "Checking for tls.key..."
+
+              if [ ! -f "./tls.key" ]
+
+              then
+                echo "No tls.key found"
+                echo "Please put the TLS key in tls.key in the current directory"
+                exit 1
+              else
+                echo "Found tls.key"
+              fi
+
+
+              echo "Checking for ca.crt..."
+
+              if [ ! -f "./ca.crt" ]
+
+              then
+                echo "No ca.crt found"
+                echo "Please put the CA public certificate in ca.crt in the current directory"
+                exit 1
+              else
+                echo "Found ca.crt"
+              fi
+
+
+              echo "Updating the foundational services route"
+
+
+              echo "Taking ownership of the certificate from foundational services"
+
+              oc -n ibm-common-services patch managementingress default --type merge --patch '{"spec":{"ignoreRouteCert":true}}'
+
+
+              echo "Updating certificate..."
+
+              oc -n ibm-common-services delete certificates.certmanager.k8s.io route-cert
+
+              oc -n ibm-common-services delete secret route-tls-secret
+
+              oc -n ibm-common-services create secret generic route-tls-secret --from-file=ca.crt=ca.crt  --from-file=tls.crt=tls.crt  --from-file=tls.key=tls.key
+
+
+              echo "Deleting ibmcloud-cluster-ca-cert to trigger a certificate refresh..."
+
+              oc delete secret ibmcloud-cluster-ca-cert -n ibm-common-services
+
+
+              echo "Restarting the auth-idp pods..."
+
+              oc -n ibm-common-services delete pod -l app=auth-idp
+
+
+              echo "Deleting the management-ingress-ibmcloud-cluster-ca-cert
+              secret..."
+
+              oc -n $(params.namespace) delete secret management-ingress-ibmcloud-cluster-ca-cert
+
+
+              echo "Creating operand request file to apply"
+
+
+              echo "apiVersion: operator.ibm.com/v1alpha1
+
+              kind: OperandRequest
+
+              metadata:
+                name: register-new-ca-cert
+                namespace: $(params.namespace)
+              spec:
+                requests:
+                  - operands:
+                      - name: ibm-management-ingress-operator
+                    registry: common-service
+                    registryNamespace: ibm-common-services" > operand_request.yaml
+
+              echo "Creating a new operand request that will trigger the recreation of the management-ingress secret..."
+
+              oc apply -f operand_request.yaml
+
+
+              echo "Wait for the operand request to be ready..."
+
+              oc wait --for condition=ready --timeout=120s operandrequest -n $(params.namespace) register-new-ca-cert
+
+
+              echo "Waiting for up to 30 minutes for the auth-idp pods to restart..."
+
+              oc wait --for condition=ready --timeout=900s pod -l app=auth-idp -n ibm-common-services
+
+
+              echo "Deleting the operand request now secret is up..."
+
+              oc delete operandrequest -n $(params.namespace) register-new-ca-cert
+
+
+              echo "Setup complete"
+
+              EOF
+
+
+              chmod +x hostname_update.sh
+
+
+              echo "Extracting cluster's TLS certs"
+
+              pwd
+
+
+              oc extract secret/$(oc get ingresscontroller.operator default -n openshift-ingress-operator -o jsonpath='{.spec.defaultCertificate.name}') -n openshift-ingress --to=. --keys=tls.crt,tls.key --confirm
+
+
+              csplit -s -z -f cert- tls.crt '/-----BEGIN CERTIFICATE-----/'  '{*}'
+
+
+              ls -ltr
+
+
+              mv tls.crt tls.crt.original
+
+              mv cert-00 tls.crt
+
+              cat cert-01 cert-02 > ca.crt
+
+
+              echo "Updating common services' certs"
+
+              ./hostname_update.sh
+
+
+              oc -n $(params.namespace) delete secret custom-tls-secret --ignore-not-found=true
+
+              oc create secret generic custom-tls-secret --from-file=ca.crt=./ca.crt --from-file=tls.crt=./tls.crt --from-file=tls.key=./tls.key -n $(params.namespace)
+    - name: admin-login-credential
+      runAfter:
+        - update-certs
       taskRef:
         kind: Task
         name: ibm-pak
@@ -348,5 +560,45 @@ spec:
               url=$(oc get routes cp-console -n $FS_NAMESPACE -o jsonpath='{.spec.host}' | awk '{print $1}')
               username=$(oc get secret platform-auth-idp-credentials -o jsonpath='{.data.admin_username}' -n $FS_NAMESPACE | base64 -d | awk '{print $1}')
               password=$(oc get secret platform-auth-idp-credentials -o jsonpath='{.data.admin_password}' -n $FS_NAMESPACE | base64 -d | awk '{print $1}')
+              echo "***** Admin login info *****"
+              echo "URL: $url"
+              echo "Username: $username"
+              echo "Password: $password"
+    - name: cp4s-to-verify
+      runAfter:
+        - get-sources
+        - admin-login-credential
+      params:
+        - name: namespace
+          value: "$(params.namespace)"
+        - name: verify-url
+          value: "$(params.verify-url)"
+        - name: verify-client-id
+          value: "$(params.verify-client-id)"
+        - name: verify-client-secret
+          value: "$(params.verify-client-secret)"
+      taskSpec:
+        params:
+          - name: namespace
+          - name: verify-url
+          - name: verify-client-id
+          - name: verify-client-secret
+        steps:
+          - name: set-entitlement
+            image: quay.io/congxdev/ibm-pak-ubi:latest
+            script: |
+              microdnf install -y libxml2 libxslt && microdnf clean all
+              export FQDN=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
+              export VERIFY_URL="$(params.verify-url)"
+              export VERIFY_CLIENT_ID="$(params.verify-client-id)"
+              export VERIFY_CLIENT_SECRET="$(params.verify-client-secret)"
+              export SCRIPTS="$(workspaces.ws.path)/cp4s-source/scripts/"
+              bash $(workspaces.ws.path)/cp4s-source/scripts/cp4s-to-verify.sh
+        workspaces:
+          - name: ws
+      workspaces:
+        - name: ws
+          workspace: cp4s-ws
+  workspaces:
+    - name: cp4s-ws
 
-              printf "URL: $url \nUsername: $username\nPassword: $password\n"
