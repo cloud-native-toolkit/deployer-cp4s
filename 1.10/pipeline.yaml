@@ -27,7 +27,7 @@ spec:
       description: (Required) IBM Security Verify Client secret  
       type: string
     - name: verify-admin-user
-      description: (Required) Admin user email
+      description: (Required) Admin user email. This user must be in your IBM Verify Account. 
       type: string
   tasks:
     - name: get-sources
