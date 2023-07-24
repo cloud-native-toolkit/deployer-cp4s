@@ -1,0 +1,37 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: cp4s-deployer-run
+spec:
+  timeout: 6h0m0s
+  pipelineRef:
+    name: cp4s-deploy
+  params:
+    - name: namespace
+      value: "cp4s"
+    - name: ibm-entitlement-key
+      value: "false"
+    - name: cp4s-version
+      value: "1.10"
+    - name: verify-url
+      value: "https://cp4s-techzone.verify.ibm.com"
+    - name: verify-client-id
+      value: ""
+    - name: verify-client-secret
+      value: ""
+    - name: verify-admin-email
+      value: ""
+  workspaces:
+    - name: cp4s-ws
+      volumeClaimTemplate:
+        metadata:
+          creationTimestamp: null
+        spec:
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 1Gi
+          storageClassName: ocs-storagecluster-cephfs
+          volumeMode: Filesystem
+        status: {}

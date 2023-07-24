@@ -1,0 +1,583 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: cp4s-deploy
+spec:
+  params:
+    - name: namespace
+      type: string
+      description: Namespace for CP4S deployment
+      default: "cp4s"
+    - name: cp4s-version
+      type: string
+      description: CP4S version
+      default: "1.10"
+    - name: ibm-entitlement-key
+      description: IBM entitlement key. If not set, will use secret manger. 
+      type: string
+      default: "false"
+    - name: verify-url
+      default: "https://cp4s-techzone.verify.ibm.com"
+      description: (Required) IBM Security Verify fully qualified domain name
+      type: string
+    - name: verify-client-id
+      description: (Required) IBM Security Verify Client ID 
+      type: string
+    - name: verify-client-secret
+      description: (Required) IBM Security Verify Client secret  
+      type: string
+    - name: verify-admin-email
+      description: IBM Security Verify Admin email
+      type: string
+  tasks:
+    - name: get-admin-email
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            if [[ -z "$(params.verify-admin-email)" ]]; then
+              email=$(oc get secret tz-user-email -o go-template='{{index .data "apiKey" | base64decode}}')
+
+              # Output the extracted values
+              if [[ -z "$email" ]]; then
+                  echo "ERROR: Unable to get users email..."
+                  exit 1
+              fi
+            else
+                email="$(params.verify-admin-email)"
+            fi
+
+            printf $email | tee $(results.output.path)
+    - name: get-sources
+      taskSpec:
+        steps:
+        - name: git-clone-step
+          image: alpine/git
+          args:
+            - clone
+            - "https://github.com/cloud-native-toolkit/deployer-cp4s.git"
+            - "$(workspaces.ws.path)/cp4s-source"
+        workspaces:
+          - name: ws
+      workspaces:
+        - name: ws
+          workspace: cp4s-ws
+    - name: get-verify-info
+      runAfter:
+        - get-sources
+      taskSpec:
+        steps:
+          - name: grab-info
+            image: quay.io/openshift/origin-cli:latest
+            script: |
+              #!/usr/bin/env bash
+              export IBMCLOUD_API_KEY=$(oc get secret ibm-secret -n kube-system -o jsonpath='{.data.apiKey}' | base64 -d)
+              export AUTH_RESPONSE_JSON=$(curl -s -X POST \
+                "https://iam.cloud.ibm.com/identity/token" \
+                --header 'Content-Type: application/x-www-form-urlencoded' \
+                --header 'Accept: application/json' \
+                --data-urlencode 'grant_type=urn:ibm:params:oauth:grant-type:apikey' \
+                --data-urlencode "apikey=${IBMCLOUD_API_KEY}")
+              export ACCESS_TOKEN=$(echo $AUTH_RESPONSE_JSON | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
+              export VCS_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud/api/v2/secrets/46bce636-ba06-38a4-70b4-dc4b6dc4d3fc")
+              export VCS=$(echo $VCS_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$')
+              export VCI_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud/api/v2/secrets/826d1615-8bdd-da0f-cd5b-5ef45476f2d6")
+              export VCI=$(echo $VCI_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$')
+              echo $VCI > $(workspaces.ws.path)/vci.txt
+              echo $VCS > $(workspaces.ws.path)/vcs.txt
+        workspaces:
+          - name: ws
+      workspaces:
+        - name: ws
+          workspace: cp4s-ws
+    - name: import-user-to-verify
+      runAfter:
+        - get-admin-email
+        - get-verify-info
+      taskSpec:
+        params:
+          - name: namespace
+          - name: verify-url
+          - name: verify-client-id
+          - name: verify-client-secret
+          - name: verify-email
+        steps:
+          - name: import-user
+            image: python
+            script: |
+              #!/usr/bin/env bash
+              python3 -m pip install requests
+              export VERIFY_URL="$(params.verify-url)"
+              echo "$VERIFY_URL"
+              export VERIFY_CLIENT_ID="$(params.verify-client-id)"
+              if [[ -z "$VERIFY_CLIENT_ID" ]]; then
+                vciPath="$(workspaces.ws.path)/vci.txt"
+                export VERIFY_CLIENT_ID=$(cat $vciPath)
+              fi
+              echo "$VERIFY_CLIENT_ID"
+              export VERIFY_CLIENT_SECRET="$(params.verify-client-secret)"
+              if [[ -z "$VERIFY_CLIENT_SECRET" ]]; then
+                vcsPath="$(workspaces.ws.path)/vcs.txt"
+                export VERIFY_CLIENT_SECRET=$(cat $vcsPath)
+              fi
+              export VERIFY_CLIENT_SECRET="$VERIFY_CLIENT_SECRET"
+              export TZ_EMAIL="$(params.verify-email)"
+              python3 $(workspaces.ws.path)/cp4s-source/scripts/import-user-to-verify.py
+        workspaces:
+          - name: ws
+      params:
+        - name: namespace
+          value: "$(params.namespace)"
+        - name: verify-url
+          value: "$(params.verify-url)"
+        - name: verify-client-id
+          value: "$(params.verify-client-id)"
+        - name: verify-client-secret
+          value: "$(params.verify-client-secret)"
+        - name: verify-email
+          value: $(tasks.get-admin-email.results.output)
+      workspaces:
+        - name: ws
+          workspace: cp4s-ws
+    - name: install-serverless
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            ---
+            apiVersion: v1
+            kind: Namespace
+            metadata:
+              name: openshift-serverless
+            ---
+            apiVersion: operators.coreos.com/v1
+            kind: OperatorGroup
+            metadata:
+              name: serverless-operators
+              namespace: openshift-serverless
+            spec: {}
+            ---
+            apiVersion: operators.coreos.com/v1alpha1
+            kind: Subscription
+            metadata:
+              name: serverless-operator
+              namespace: openshift-serverless
+            spec:
+              channel: stable 
+              name: serverless-operator 
+              source: redhat-operators 
+              sourceNamespace: openshift-marketplace 
+            EOF
+    - name: wait-for-serverless-crd
+      runAfter:
+        - install-serverless
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              #!/usr/bin/env bash
+              serverlessCSV=$(oc get csv -o=custom-columns=NAME:.metadata.name | grep serverless)
+              while [[ "$serverlessCSV" == "" ]]
+              do 
+                  echo "Waiting for crd to install..."
+                  serverlessCSV=$(oc get csv -o=custom-columns=NAME:.metadata.name | grep serverless)
+                  sleep 5
+              done
+              echo "crd installed!"
+              status=$(oc get csv/$serverlessCSV -o=custom-columns=PHASE:.status.phase --no-headers)
+              while [[ "$status" != "Succeeded" ]]
+              do
+                  status=$(oc get csv/$serverlessCSV -o=custom-columns=PHASE:.status.phase --no-headers)
+                  echo "Waiting for crd to reach success status..."
+                  sleep 15
+              done
+    - name: install-knative-serving
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      runAfter:
+        - wait-for-serverless-crd
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            apiVersion: operator.knative.dev/v1beta1
+            kind: KnativeServing
+            metadata:
+                name: knative-serving
+                namespace: knative-serving
+            spec:
+                high-availability:
+                    replicas: 2
+            EOF
+    - name: add-namespace
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF 
+            kind: Namespace
+            apiVersion: v1
+            metadata:
+              name: $(params.namespace)
+            EOF
+    - name: get-ibm-entitlement-key
+      params:
+        - name: KEY_ID
+          value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+      taskRef:
+        kind: Task
+        name: ibmcloud-secrets-manager-get
+    - name: set-retrieved-entitlement-key
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: in
+          values: ["false"]
+      runAfter:
+        - get-ibm-entitlement-key
+        - add-namespace
+      taskSpec:
+        params:
+          - name: entitlement-key
+          - name: namespace
+        steps:
+          - name: set-entitlement-key
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              oc get secret "ibm-entitlement-key" -n $(params.namespace)
+              if [ $? -eq 0 ]; then
+                  echo "Deleting existing secret..."
+                  oc delete secrets "ibm-entitlement-key" -n $(params.namespace)
+              fi
+              oc create secret docker-registry "ibm-entitlement-key" -n $(params.namespace) "--docker-server=cp.icr.io" "--docker-username=cp" "--docker-password=$(params.entitlement-key)"
+      params:
+        - name: entitlement-key
+          value: $(tasks.get-ibm-entitlement-key.results.secret-value)
+        - name: namespace
+          value: "$(params.namespace)"
+    - name: set-provided-entitlement-key
+      runAfter:
+        - add-namespace
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: notin
+          values: ["false"]
+      params:
+        - name: ibm-entitlement-key
+          value: "$(params.ibm-entitlement-key)"
+        - name: namespace
+          value: "$(params.namespace)"
+      taskSpec:
+        params:
+          - name: ibm-entitlement-key
+          - name: namespace
+        steps:
+          - name: set-entitlement
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              oc get secret "ibm-entitlement-key" -n $(params.namespace)
+              if [ $? -eq 0 ]; then
+                  echo "Deleting existing secret..."
+                  oc delete secrets "ibm-entitlement-key" -n $(params.namespace)
+              fi
+              oc create secret docker-registry "ibm-entitlement-key" -n $(params.namespace) "--docker-server=cp.icr.io" "--docker-username=cp" "--docker-password=$(params.ibm-entitlement-key)"
+    - name: install-operator-catalog
+      runAfter:
+        - set-provided-entitlement-key
+        - set-retrieved-entitlement-key
+        - install-knative-serving
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+            oc apply -f - <<EOF
+            apiVersion: operators.coreos.com/v1alpha1
+            kind: CatalogSource
+            metadata:
+                name: ibm-operator-catalog
+                namespace: openshift-marketplace
+            spec:
+                displayName: ibm-operator-catalog
+                publisher: IBM Content
+                sourceType: grpc
+                image: icr.io/cpopen/ibm-operator-catalog
+                updateStrategy:
+                    registryPoll:
+                      interval: 45m
+            EOF
+    - name: wait-for-operator
+      runAfter:
+        - install-operator-catalog
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              status=$(oc get pod -lolm.catalogSource=ibm-operator-catalog -n openshift-marketplace -o=custom-columns=STATUS:.status.phase --no-headers)
+
+              while [[ "$status" != "Running" ]]
+              do
+                  status=$(oc get pod -lolm.catalogSource=ibm-operator-catalog -n openshift-marketplace -o=custom-columns=STATUS:.status.phase --no-headers)
+                  echo "Waiting for catalog to install..."
+                  sleep 15
+              done
+    - name: install-cp4s-operator
+      runAfter:
+        - wait-for-operator
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              #!/usr/bin/env bash
+              oc apply -f - <<EOF 
+              apiVersion: operators.coreos.com/v1
+              kind: OperatorGroup
+              metadata:
+                   name: cp4s-operator-group
+                   namespace: $(params.namespace)
+              spec:
+                   targetNamespaces:
+                      - $(params.namespace)
+              EOF
+    - name: install-cp4s-subscription
+      runAfter:
+        - install-cp4s-operator
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              oc apply -f - <<EOF 
+              apiVersion: operators.coreos.com/v1alpha1
+              kind: Subscription
+              metadata:
+                   name: ibm-cp-security-operator
+                   namespace: $(params.namespace)
+              spec:
+                   channel: v1.10
+                   installPlanApproval: Automatic
+                   name: ibm-cp-security-operator
+                   source: ibm-operator-catalog
+                   sourceNamespace: openshift-marketplace
+              EOF
+    - name: wait-for-cp4s-operator
+      runAfter:
+        - install-cp4s-subscription
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              #!/usr/bin/env bash
+              deployStatus=$(oc get pod -lname=ibm-cp-security-operator -n $(params.namespace) -o=custom-columns=STATUS:.status.phase --no-headers)
+
+              while [[ "$deployStatus" != "Running" ]]
+              do
+                  echo "Waiting on operator to start..."
+                  deployStatus=$(oc get pod -lname=ibm-cp-security-operator -n $(params.namespace) -o=custom-columns=STATUS:.status.phase --no-headers)
+                  sleep 10
+              done
+              echo "Operator started!"
+    - name: install-cp4s-threat-management
+      runAfter:
+        - import-user-to-verify
+        - wait-for-cp4s-operator
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              oc apply -f - <<EOF 
+              apiVersion: isc.ibm.com/v1
+              kind: CP4SThreatManagement
+              metadata:
+                   name: threatmgmt
+                   namespace: $(params.namespace)
+              spec:
+                   acceptLicense: true
+                   basicDeploymentConfiguration:
+                      adminUser: $(tasks.get-admin-email.results.output)
+                      domain: ""
+                      storageClass: ""
+                   extendedDeploymentConfiguration:
+                       airgapInstall: false
+                       clusterProxy: false
+                       backupStorageClass: ""
+                       backupStorageSize: ""
+                       imagePullPolicy: IfNotPresent
+                       repository: cp.icr.io/cp/cp4s
+                       repositoryType: entitled
+                       roksAuthentication: false
+                       CSNamespace: ibm-common-services
+                   threatManagementCapabilities:
+                       deployDRC: true
+                       deployRiskManager: true
+                       deployThreatInvestigator: true
+              EOF
+    - name: wait-for-threat-management
+      runAfter:
+        - install-cp4s-threat-management
+      timeout: "3h15m"
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+              #!/usr/bin/env bash
+              status=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.status.conditions}' | jq '.[0].type')
+
+              while [[ "$status" != '"Success"' ]]
+              do
+                status=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.status.conditions}' | jq '.[0].type')
+                echo "Waiting for Threat Management to install. This could take up to an hour and a half..."
+                sleep 120   
+              done
+
+              echo "CP4S installed!"
+    - name: update-certs
+      runAfter:
+        - wait-for-threat-management
+      timeout: "3h15m"
+      params:
+        - name: namespace
+          value: "$(params.namespace)"
+      taskRef:
+        kind: Task
+        name: ibm-tls-certs
+    - name: cp4s-to-verify
+      runAfter:
+        - get-verify-info
+        - update-certs
+      params:
+        - name: namespace
+          value: "$(params.namespace)"
+        - name: verify-url
+          value: "$(params.verify-url)"
+        - name: verify-client-id
+          value: "$(params.verify-client-id)"
+        - name: verify-client-secret
+          value: "$(params.verify-client-secret)"
+      taskSpec:
+        params:
+          - name: namespace
+          - name: verify-url
+          - name: verify-client-id
+          - name: verify-client-secret
+        steps:
+          - name: cp4s-to-verify
+            image: quay.io/congxdev/ibm-pak-ubi:latest
+            script: |
+              #!/usr/bin/env bash
+              microdnf install -y libxml2 libxslt && microdnf clean all
+              export FQDN=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
+              echo $FQDN > $(workspaces.ws.path)/fqdn.txt
+              export VERIFY_URL="$(params.verify-url)"
+              echo "$VERIFY_URL"
+              export VERIFY_CLIENT_ID="$(params.verify-client-id)"
+              if [[ -z "$VERIFY_CLIENT_ID" ]]; then
+                vciPath="$(workspaces.ws.path)/vci.txt"
+                export VERIFY_CLIENT_ID=$(cat $vciPath)
+              fi
+              echo "$VERIFY_CLIENT_ID"
+              export VERIFY_CLIENT_SECRET="$(params.verify-client-secret)"
+              if [[ -z "$VERIFY_CLIENT_SECRET" ]]; then
+                vcsPath="$(workspaces.ws.path)/vcs.txt"
+                export VERIFY_CLIENT_SECRET=$(cat $vcsPath)
+              fi
+              export VERIFY_CLIENT_SECRET="$VERIFY_CLIENT_SECRET"
+              export SCRIPTS="$(workspaces.ws.path)/cp4s-source/scripts/"
+              bash $(workspaces.ws.path)/cp4s-source/scripts/cp4s-to-verify.sh $VERIFY_URL $VERIFY_CLIENT_ID $VERIFY_CLIENT_SECRET $SCRIPTS
+        workspaces:
+          - name: ws
+      workspaces:
+        - name: ws
+          workspace: cp4s-ws
+    - name: import-user
+      runAfter:
+        - cp4s-to-verify
+      taskSpec:
+        params:
+          - name: namespace
+          - name: verify-url
+          - name: verify-client-id
+          - name: verify-client-secret
+          - name: verify-email
+        steps:
+          - name: set-entitlement
+            image: python
+            script: |
+              #!/usr/bin/env bash
+              python3 -m pip install requests
+              fp="$(workspaces.ws.path)/fqdn.txt"
+              export APPLICATION_NAME="$(cat $fp)"
+              echo "Application Name $APPLICATION_NAME"
+              export VERIFY_URL="$(params.verify-url)"
+              echo "$VERIFY_URL"
+              export VERIFY_CLIENT_ID="$(params.verify-client-id)"
+              if [[ -z "$VERIFY_CLIENT_ID" ]]; then
+                vciPath="$(workspaces.ws.path)/vci.txt"
+                export VERIFY_CLIENT_ID=$(cat $vciPath)
+              fi
+              echo "$VERIFY_CLIENT_ID"
+              export VERIFY_CLIENT_SECRET="$(params.verify-client-secret)"
+              if [[ -z "$VERIFY_CLIENT_SECRET" ]]; then
+                vcsPath="$(workspaces.ws.path)/vcs.txt"
+                export VERIFY_CLIENT_SECRET=$(cat $vcsPath)
+              fi
+              export VERIFY_CLIENT_SECRET="$VERIFY_CLIENT_SECRET"
+              export TZ_EMAIL="$(params.verify-email)"
+              python3 $(workspaces.ws.path)/cp4s-source/scripts/add-user-to-application.py
+        workspaces:
+          - name: ws
+      params:
+        - name: namespace
+          value: "$(params.namespace)"
+        - name: verify-url
+          value: "$(params.verify-url)"
+        - name: verify-client-id
+          value: "$(params.verify-client-id)"
+        - name: verify-client-secret
+          value: "$(params.verify-client-secret)"
+        - name: verify-email
+          value: $(tasks.get-admin-email.results.output)
+      workspaces:
+        - name: ws
+          workspace: cp4s-ws
+    - name: get-login-info
+      runAfter:
+        - import-user
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |-
+            loginURL=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
+            echo "You can login to $loginURL using the enterprise saml with the following email $(tasks.get-admin-email.results.output)"
+  workspaces:
+    - name: cp4s-ws
+
