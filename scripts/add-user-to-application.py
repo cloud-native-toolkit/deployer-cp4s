@@ -4,6 +4,7 @@ class Verify:
     bearerToken = ""
     verifyURL = os.environ.get('VERIFY_URL', "")
     applicationName = os.environ.get('APPLICATION_NAME', "")[0:50]
+    
     def __init__(self) -> None:
         self.bearerToken = self.getBearerToken()
         pass
@@ -36,10 +37,11 @@ class Verify:
         for application in applications:
             if application['name'] != name:
                 continue
+            # we want the ID, so we need to split the link and return the last element
+            # I.E /application/link/3432141324
             applicationLink = application['_links']['self']['href']
             applicationLinkArray = applicationLink.split("/")
-            length = len(applicationLinkArray)
-            return applicationLinkArray[length - 1]
+            return applicationLinkArray[-1]
         return None
 
     def updateEntitlement(self, userId, applicationId):
@@ -57,6 +59,7 @@ class Verify:
         }
 
         response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
 
 
     def getUser(self, email: str):
@@ -84,8 +87,7 @@ class Verify:
 
         userID = self.getUser(email)
         if userID is None:
-            print("User already exists, exiting...")
-            return ""
+            raise Exception("User doesn't exist in Verify... exiting")
         
         self.updateEntitlement(userID, applicationID)
 
