@@ -85,6 +85,7 @@ class Verify:
         return userId
 
 userEmail = os.environ.get('TZ_EMAIL', "")
+userEmail = userEmail.lower()
 if userEmail == "":
     raise Exception("User email cannot be empty!")
 verify = Verify()

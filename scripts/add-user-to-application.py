@@ -77,20 +77,20 @@ class Verify:
             userId = None
         return userId
     
-    def importUser(self, email: str):
+    def addUserToApplication(self, email: str):
         applicationID = self.getApplicationID(self.applicationName)
         if applicationID is None:
             raise Exception("Unable to get application ID")
 
         userID = self.getUser(email)
-        if userID is not None:
+        if userID is None:
             print("User already exists, exiting...")
             return ""
-
+        
         self.updateEntitlement(userID, applicationID)
 
 userEmail = os.environ.get('TZ_EMAIL', "")
 if userEmail == "":
     raise Exception("User email cannot be empty!")
 verify = Verify()
-verify.importUser(userEmail)
+verify.addUserToApplication(userEmail)
