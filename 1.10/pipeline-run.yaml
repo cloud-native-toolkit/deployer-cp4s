@@ -14,7 +14,7 @@ spec:
     - name: cp4s-version
       value: "1.10"
     - name: verify-url
-      value: "https://cp4s-techzone.verify.ibm.com"
+      value: ""
     - name: verify-client-id
       value: ""
     - name: verify-client-secret

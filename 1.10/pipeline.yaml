@@ -39,15 +39,9 @@ spec:
         - name: SCRIPT
           value: |
             if [[ -z "$(params.verify-admin-email)" ]]; then
-              email=$(oc get secret tz-user-email -o go-template='{{index .data "apiKey" | base64decode}}')
-
-              # Output the extracted values
-              if [[ -z "$email" ]]; then
-                  echo "ERROR: Unable to get users email..."
-                  exit 1
-              fi
+              email="cp4s-demo"
             else
-                email="$(params.verify-admin-email)"
+              email="$(params.verify-admin-email)"
             fi
 
             printf $email | tee $(results.output.path)
@@ -65,83 +59,83 @@ spec:
       workspaces:
         - name: ws
           workspace: cp4s-ws
-    - name: get-verify-info
-      runAfter:
-        - get-sources
-      taskSpec:
-        steps:
-          - name: grab-info
-            image: quay.io/openshift/origin-cli:latest
-            script: |
-              #!/usr/bin/env bash
-              export IBMCLOUD_API_KEY=$(oc get secret ibm-secret -n kube-system -o jsonpath='{.data.apiKey}' | base64 -d)
-              export AUTH_RESPONSE_JSON=$(curl -s -X POST \
-                "https://iam.cloud.ibm.com/identity/token" \
-                --header 'Content-Type: application/x-www-form-urlencoded' \
-                --header 'Accept: application/json' \
-                --data-urlencode 'grant_type=urn:ibm:params:oauth:grant-type:apikey' \
-                --data-urlencode "apikey=${IBMCLOUD_API_KEY}")
-              export ACCESS_TOKEN=$(echo $AUTH_RESPONSE_JSON | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
-              export VCS_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud/api/v2/secrets/46bce636-ba06-38a4-70b4-dc4b6dc4d3fc")
-              export VCS=$(echo $VCS_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$')
-              export VCI_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud/api/v2/secrets/826d1615-8bdd-da0f-cd5b-5ef45476f2d6")
-              export VCI=$(echo $VCI_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$')
-              echo $VCI > $(workspaces.ws.path)/vci.txt
-              echo $VCS > $(workspaces.ws.path)/vcs.txt
-        workspaces:
-          - name: ws
-      workspaces:
-        - name: ws
-          workspace: cp4s-ws
-    - name: import-user-to-verify
-      runAfter:
-        - get-admin-email
-        - get-verify-info
-      taskSpec:
-        params:
-          - name: namespace
-          - name: verify-url
-          - name: verify-client-id
-          - name: verify-client-secret
-          - name: verify-email
-        steps:
-          - name: import-user
-            image: python
-            script: |
-              #!/usr/bin/env bash
-              python3 -m pip install requests
-              export VERIFY_URL="$(params.verify-url)"
-              echo "$VERIFY_URL"
-              export VERIFY_CLIENT_ID="$(params.verify-client-id)"
-              if [[ -z "$VERIFY_CLIENT_ID" ]]; then
-                vciPath="$(workspaces.ws.path)/vci.txt"
-                export VERIFY_CLIENT_ID=$(cat $vciPath)
-              fi
-              echo "$VERIFY_CLIENT_ID"
-              export VERIFY_CLIENT_SECRET="$(params.verify-client-secret)"
-              if [[ -z "$VERIFY_CLIENT_SECRET" ]]; then
-                vcsPath="$(workspaces.ws.path)/vcs.txt"
-                export VERIFY_CLIENT_SECRET=$(cat $vcsPath)
-              fi
-              export VERIFY_CLIENT_SECRET="$VERIFY_CLIENT_SECRET"
-              export TZ_EMAIL="$(params.verify-email)"
-              python3 $(workspaces.ws.path)/cp4s-source/scripts/import-user-to-verify.py
-        workspaces:
-          - name: ws
-      params:
-        - name: namespace
-          value: "$(params.namespace)"
-        - name: verify-url
-          value: "$(params.verify-url)"
-        - name: verify-client-id
-          value: "$(params.verify-client-id)"
-        - name: verify-client-secret
-          value: "$(params.verify-client-secret)"
-        - name: verify-email
-          value: $(tasks.get-admin-email.results.output)
-      workspaces:
-        - name: ws
-          workspace: cp4s-ws
+    # - name: get-verify-info
+    #   runAfter:
+    #     - get-sources
+    #   taskSpec:
+    #     steps:
+    #       - name: grab-info
+    #         image: quay.io/openshift/origin-cli:latest
+    #         script: |
+    #           #!/usr/bin/env bash
+    #           export IBMCLOUD_API_KEY=$(oc get secret ibm-secret -n kube-system -o jsonpath='{.data.apiKey}' | base64 -d)
+    #           export AUTH_RESPONSE_JSON=$(curl -s -X POST \
+    #             "https://iam.cloud.ibm.com/identity/token" \
+    #             --header 'Content-Type: application/x-www-form-urlencoded' \
+    #             --header 'Accept: application/json' \
+    #             --data-urlencode 'grant_type=urn:ibm:params:oauth:grant-type:apikey' \
+    #             --data-urlencode "apikey=${IBMCLOUD_API_KEY}")
+    #           export ACCESS_TOKEN=$(echo $AUTH_RESPONSE_JSON | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
+    #           export VCS_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud/api/v2/secrets/46bce636-ba06-38a4-70b4-dc4b6dc4d3fc")
+    #           export VCS=$(echo $VCS_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$')
+    #           export VCI_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud/api/v2/secrets/826d1615-8bdd-da0f-cd5b-5ef45476f2d6")
+    #           export VCI=$(echo $VCI_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$')
+    #           echo $VCI > $(workspaces.ws.path)/vci.txt
+    #           echo $VCS > $(workspaces.ws.path)/vcs.txt
+    #     workspaces:
+    #       - name: ws
+    #   workspaces:
+    #     - name: ws
+    #       workspace: cp4s-ws
+    # - name: import-user-to-verify
+    #   runAfter:
+    #     - get-admin-email
+    #     - get-verify-info
+    #   taskSpec:
+    #     params:
+    #       - name: namespace
+    #       - name: verify-url
+    #       - name: verify-client-id
+    #       - name: verify-client-secret
+    #       - name: verify-email
+    #     steps:
+    #       - name: import-user
+    #         image: python
+    #         script: |
+    #           #!/usr/bin/env bash
+    #           python3 -m pip install requests
+    #           export VERIFY_URL="$(params.verify-url)"
+    #           echo "$VERIFY_URL"
+    #           export VERIFY_CLIENT_ID="$(params.verify-client-id)"
+    #           if [[ -z "$VERIFY_CLIENT_ID" ]]; then
+    #             vciPath="$(workspaces.ws.path)/vci.txt"
+    #             export VERIFY_CLIENT_ID=$(cat $vciPath)
+    #           fi
+    #           echo "$VERIFY_CLIENT_ID"
+    #           export VERIFY_CLIENT_SECRET="$(params.verify-client-secret)"
+    #           if [[ -z "$VERIFY_CLIENT_SECRET" ]]; then
+    #             vcsPath="$(workspaces.ws.path)/vcs.txt"
+    #             export VERIFY_CLIENT_SECRET=$(cat $vcsPath)
+    #           fi
+    #           export VERIFY_CLIENT_SECRET="$VERIFY_CLIENT_SECRET"
+    #           export TZ_EMAIL="$(params.verify-email)"
+    #           python3 $(workspaces.ws.path)/cp4s-source/scripts/import-user-to-verify.py
+    #     workspaces:
+    #       - name: ws
+    #   params:
+    #     - name: namespace
+    #       value: "$(params.namespace)"
+    #     - name: verify-url
+    #       value: "$(params.verify-url)"
+    #     - name: verify-client-id
+    #       value: "$(params.verify-client-id)"
+    #     - name: verify-client-secret
+    #       value: "$(params.verify-client-secret)"
+    #     - name: verify-email
+    #       value: $(tasks.get-admin-email.results.output)
+    #   workspaces:
+    #     - name: ws
+    #       workspace: cp4s-ws
     - name: install-serverless
       taskRef:
         kind: Task
@@ -300,7 +294,6 @@ spec:
       runAfter:
         - set-provided-entitlement-key
         - set-retrieved-entitlement-key
-        - install-knative-serving
       taskRef:
         kind: Task
         name: ibm-pak
@@ -342,6 +335,7 @@ spec:
     - name: install-cp4s-operator
       runAfter:
         - wait-for-operator
+        - install-knative-serving
       taskRef:
         kind: Task
         name: ibm-pak
@@ -402,7 +396,6 @@ spec:
               echo "Operator started!"
     - name: install-cp4s-threat-management
       runAfter:
-        - import-user-to-verify
         - wait-for-cp4s-operator
       taskRef:
         kind: Task
@@ -469,9 +462,16 @@ spec:
         kind: Task
         name: ibm-tls-certs
     - name: cp4s-to-verify
+      when:
+      - input: "$(params.verify-client-id)"
+        operator: notin
+        values: [""]
+      - input: "$(params.verify-client-secret)"
+        operator: notin
+        values: [""]
       runAfter:
-        - get-verify-info
         - update-certs
+        - get-sources
       params:
         - name: namespace
           value: "$(params.namespace)"
@@ -496,19 +496,8 @@ spec:
               export FQDN=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
               echo $FQDN > $(workspaces.ws.path)/fqdn.txt
               export VERIFY_URL="$(params.verify-url)"
-              echo "$VERIFY_URL"
               export VERIFY_CLIENT_ID="$(params.verify-client-id)"
-              if [[ -z "$VERIFY_CLIENT_ID" ]]; then
-                vciPath="$(workspaces.ws.path)/vci.txt"
-                export VERIFY_CLIENT_ID=$(cat $vciPath)
-              fi
-              echo "$VERIFY_CLIENT_ID"
               export VERIFY_CLIENT_SECRET="$(params.verify-client-secret)"
-              if [[ -z "$VERIFY_CLIENT_SECRET" ]]; then
-                vcsPath="$(workspaces.ws.path)/vcs.txt"
-                export VERIFY_CLIENT_SECRET=$(cat $vcsPath)
-              fi
-              export VERIFY_CLIENT_SECRET="$VERIFY_CLIENT_SECRET"
               export SCRIPTS="$(workspaces.ws.path)/cp4s-source/scripts/"
               bash $(workspaces.ws.path)/cp4s-source/scripts/cp4s-to-verify.sh $VERIFY_URL $VERIFY_CLIENT_ID $VERIFY_CLIENT_SECRET $SCRIPTS
         workspaces:
@@ -517,6 +506,13 @@ spec:
         - name: ws
           workspace: cp4s-ws
     - name: import-user
+      when:
+      - input: "$(params.verify-client-id)"
+        operator: notin
+        values: [""]
+      - input: "$(params.verify-client-secret)"
+        operator: notin
+        values: [""]
       runAfter:
         - cp4s-to-verify
       taskSpec:
@@ -567,7 +563,14 @@ spec:
       workspaces:
         - name: ws
           workspace: cp4s-ws
-    - name: get-login-info
+    - name: verify-login-info
+      when:
+      - input: "$(params.verify-client-id)"
+        operator: notin
+        values: [""]
+      - input: "$(params.verify-client-secret)"
+        operator: notin
+        values: [""]
       runAfter:
         - import-user
       taskRef:
@@ -578,6 +581,51 @@ spec:
           value: |-
             loginURL=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
             echo "You can login to $loginURL using the enterprise saml with the following email $(tasks.get-admin-email.results.output)"
+    - name: open-ldap
+      when:
+      - input: "$(params.verify-client-id)"
+        operator: in
+        values: [""]
+      - input: "$(params.verify-client-secret)"
+        operator: in
+        values: [""]
+      params:
+        - name: verify-client-id
+          value: "$(params.verify-client-id)"
+        - name: verify-client-secret
+          value: "$(params.verify-client-secret)"
+        - name: namespace
+          value: "$(params.namespace)"
+      runAfter:
+        - update-certs
+      taskSpec:
+        params:
+          - name: namespace
+          - name: verify-client-id
+          - name: verify-client-secret
+        steps:
+          - name: open-ldap
+            image: quay.io/congxdev/ibm-pak-ubi:latest
+            script: |
+              #!/usr/bin/env bash
+              microdnf install rsync
+              rsync --version
+              PASSWORD=$($RANDOM | md5sum | head -c 20)
+              oc project $(params.namespace)
+              POD=$(oc get pod --no-headers -lrun=cp-serviceability | cut -d' ' -f1)
+              rsync --rsh='oc rsh' -av -c --inplace --partial --append --progress $POD:/opt/bin/linux/cpctl ./cpctl && chmod +x ./cpctl
+              mv cpctl /usr/local/bin
+              cpctl load
+              cpctl tools deploy_openldap --token $(oc whoami -t) --operation install --ldap_usernames cp4s-demo --ldap_password $PASSWORD
+              POD=$(oc get pods -lname=isc-entitlements --no-headers | grep -i running | head -1 | awk '{print $1}')
+              oc exec $POD -- node ./utilities/setAdminUser.js cp4s-demo
+              loginURL=$(oc get CP4SThreatManagement threatmgmt -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
+              echo "-----------------------------------------------------------"
+              echo "You may login to CP4S with the following info"
+              echo "URL: https://$loginURL"
+              echo "Username: cp4s-demo"
+              echo "Password: $PASSWORD"
+              echo "-----------------------------------------------------------"
   workspaces:
     - name: cp4s-ws
 
