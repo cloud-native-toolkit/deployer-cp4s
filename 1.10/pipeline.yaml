@@ -611,16 +611,32 @@ spec:
               microdnf install rsync
               rsync --version
               PASSWORD=$($RANDOM | md5sum | head -c 20)
-              oc project $(params.namespace)
               POD=$(oc get pod -n $(params.namespace) --no-headers -lrun=cp-serviceability | cut -d' ' -f1)
-              rsync --rsh='oc rsh' -av -c --inplace --partial --append --progress $POD:/opt/bin/linux/cpctl ./cpctl && chmod +x ./cpctl
+              rsync --rsh='oc rsh -n $(params.namespace)' -av -c --inplace --partial --append --progress $POD:/opt/bin/linux/cpctl ./cpctl && chmod +x ./cpctl
               mv cpctl /usr/local/bin
-              cpctl load
-              cpctl tools deploy_openldap --token $(oc whoami -t) --operation install --ldap_usernames cp4s-demo --ldap_password $PASSWORD
-              cpctl remediation sync_ldap
+              cpctl load -n $(params.namespace)
+              # Function to check if all pods are ready
+              function are_pods_ready() {
+                  local pod_status=$(oc get pods -n $(params.namespace) -lname=isc-entitlements --no-headers -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}')
+                  local num_pods=$(echo "$pod_status" | wc -l)
+                  local num_ready=$(echo "$pod_status" | grep -c "True")
+              
+                  if [[ $num_pods -eq $num_ready ]]; then
+                      return 0
+                  else
+                      return 1
+                  fi
+              }
+              while ! are_pods_ready; do
+                echo "Waiting for pods to be ready..."
+                sleep 10
+              done
+              echo "Pods are ready!"
+              cpctl tools deploy_openldap -n $(params.namespace) --token $(oc whoami -t) --operation install --ldap_usernames cp4s-demo --ldap_password $PASSWORD
+              cpctl remediation sync_ldap -n $(params.namespace)
               POD=$(oc get pods -n $(params.namespace) -lname=isc-entitlements --no-headers | grep -i running | head -1 | awk '{print $1}')
-              oc exec $POD -n $(params.namespace) -- node ./utilities/setAdminUser.js "cp4s-demo"
-              loginURL=$(oc get CP4SThreatManagement threatmgmt -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
+              oc exec $POD -n $(params.namespace) -- node ./utilities/setAdminUser.js cp4s-demo
+              loginURL=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
               echo "-----------------------------------------------------------"
               echo "You may login to CP4S with the following info"
               echo "URL: https://$loginURL"
