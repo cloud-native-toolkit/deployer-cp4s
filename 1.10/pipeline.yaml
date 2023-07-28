@@ -617,7 +617,7 @@ spec:
               cpctl load -n $(params.namespace)
               cpctl tools deploy_openldap -n $(params.namespace) --token $(oc whoami -t) --operation install --ldap_usernames cp4s-demo --ldap_password $PASSWORD
               oc delete pod -lname=isc-entitlements -n $(params.namespace)
-              "waiting for isc-entitlements pods to be deleted"
+              echo "waiting for isc-entitlements pods to be deleted"
               sleep 20
               echo "waiting for isc-entitlements pods to be ready"
               oc wait pod -lname=isc-entitlements -n $(params.namespace) --for=condition=Ready --timeout=30m
@@ -626,7 +626,7 @@ spec:
               oc exec $POD -n $(params.namespace) -- node ./utilities/setAdminUser.js cp4s-demo
               loginURL=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
               echo "-----------------------------------------------------------"
-              echo "You may login to CP4S with the following info"
+              echo "Login details for CP4S with Enterprise LDAP"
               echo "URL: https://$loginURL"
               echo "Username: cp4s-demo"
               echo "Password: $PASSWORD"
