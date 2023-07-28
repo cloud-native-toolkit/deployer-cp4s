@@ -36,3 +36,15 @@ The top-level folders in this repository are for the different CP4S versions. In
 `oc apply -f pipeline.yaml` to install configure service account and install tasks and pipeline
 
 `oc create -f pipeline-run.yaml` to kick off pipeline to install CP4S
+
+## CP Console info
+
+If this is being deployed for a demo purpose (I.E on TechZone) you can follow these steps to get the login info.
+
+In the OpenShift Cluster
+* Go to Pipeline -> Pipelines
+* Click on the PipelineRuns Tab
+* Search for the pipeline run name that includes cp4s-deployer and click on it
+* Wait for the pipelinerun to reach the Succeeded status
+* Click the Logs Tab, then click on the task log for open-ldap
+* You should see login details at the bottom of the logs, use these to login to the cp console
