@@ -616,23 +616,11 @@ spec:
               mv cpctl /usr/local/bin
               cpctl load -n $(params.namespace)
               cpctl tools deploy_openldap -n $(params.namespace) --token $(oc whoami -t) --operation install --ldap_usernames cp4s-demo --ldap_password $PASSWORD
-              # Function to check if all pods are ready
-              function are_pods_ready() {
-                  local pod_status=$(oc get pods -n $(params.namespace) -lname=isc-entitlements --no-headers -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}')
-                  local num_pods=$(echo "$pod_status" | wc -l)
-                  local num_ready=$(echo "$pod_status" | grep -c "True")
-              
-                  if [[ $num_pods -eq $num_ready ]]; then
-                      return 0
-                  else
-                      return 1
-                  fi
-              }
-              while ! are_pods_ready; do
-                echo "Waiting for isc-entitlements pods to be ready..."
-                sleep 10
-              done
-              echo "Pods are ready!"
+              oc delete pod -lname=isc-entitlements -n $(params.namespace)
+              "waiting for isc-entitlements pods to be deleted"
+              sleep 20
+              echo "waiting for isc-entitlements pods to be ready"
+              oc wait pod -lname=isc-entitlements -n $(params.namespace) --for=condition=Ready --timeout=30m
               cpctl remediation sync_ldap -n $(params.namespace)
               POD=$(oc get pods -n $(params.namespace) -lname=isc-entitlements --no-headers | grep -i running | head -1 | awk '{print $1}')
               oc exec $POD -n $(params.namespace) -- node ./utilities/setAdminUser.js cp4s-demo
