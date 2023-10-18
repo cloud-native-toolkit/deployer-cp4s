@@ -489,7 +489,7 @@ spec:
           - name: verify-client-secret
         steps:
           - name: cp4s-to-verify
-            image: quay.io/congxdev/ibm-pak-ubi:latest
+            image: quay.io/ibmtz/ibm-pak-ubi:latest
             script: |
               #!/usr/bin/env bash
               microdnf install -y libxml2 libxslt && microdnf clean all
@@ -605,7 +605,7 @@ spec:
           - name: verify-client-secret
         steps:
           - name: open-ldap
-            image: quay.io/congxdev/ibm-pak-ubi:latest
+            image: quay.io/ibmtz/ibm-pak-ubi:latest
             script: |
               #!/usr/bin/env bash
               microdnf install rsync
