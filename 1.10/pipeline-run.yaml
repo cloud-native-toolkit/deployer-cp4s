@@ -35,3 +35,7 @@ spec:
           storageClassName: ocs-storagecluster-cephfs
           volumeMode: Filesystem
         status: {}
+  podTemplate:
+    securityContext:
+      fsGroup: 65532
+    

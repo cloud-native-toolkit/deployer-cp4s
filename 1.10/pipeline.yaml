@@ -45,20 +45,24 @@ spec:
             fi
 
             printf $email | tee $(results.output.path)
-    - name: get-sources
-      taskSpec:
-        steps:
-        - name: git-clone-step
-          image: alpine/git
-          args:
-            - clone
-            - "https://github.com/cloud-native-toolkit/deployer-cp4s.git"
-            - "$(workspaces.ws.path)/cp4s-source"
-        workspaces:
-          - name: ws
+    - name: git-clone
+      params:
+        - name: url
+          value: https://github.com/cloud-native-toolkit/deployer-cp4s
+        - name: subdirectory
+          value: "cp4s-source"
       workspaces:
-        - name: ws
+        - name: output
           workspace: cp4s-ws
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/tektoncd/catalog.git
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: task/git-clone/0.9/git-clone.yaml
     # - name: get-verify-info
     #   runAfter:
     #     - get-sources
@@ -471,7 +475,7 @@ spec:
         values: [""]
       runAfter:
         - update-certs
-        - get-sources
+        - git-clone
       params:
         - name: namespace
           value: "$(params.namespace)"
@@ -633,4 +637,3 @@ spec:
               echo "-----------------------------------------------------------"
   workspaces:
     - name: cp4s-ws
-
