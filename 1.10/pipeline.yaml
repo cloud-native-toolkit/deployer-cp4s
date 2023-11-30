@@ -1,5 +1,5 @@
 ---
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: cp4s-deploy
@@ -18,16 +18,19 @@ spec:
       type: string
       default: "false"
     - name: verify-url
-      default: "https://cp4s-techzone.verify.ibm.com"
+      default: ""
       description: (Required) IBM Security Verify fully qualified domain name
       type: string
     - name: verify-client-id
+      default: ""
       description: (Required) IBM Security Verify Client ID 
       type: string
     - name: verify-client-secret
+      default: ""
       description: (Required) IBM Security Verify Client secret  
       type: string
     - name: verify-admin-email
+      default: ""
       description: IBM Security Verify Admin email
       type: string
   tasks:
