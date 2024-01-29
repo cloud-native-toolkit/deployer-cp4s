@@ -1,5 +1,5 @@
 ---
-apiVersion: tekton.dev/v1
+apiVersion: tekton.dev/v1beta1
 kind: Pipeline
 metadata:
   name: cp4s-deploy
@@ -56,9 +56,9 @@ spec:
           args:
             - clone
             - "https://github.com/cloud-native-toolkit/deployer-cp4s.git"
-            - "$(workspaces.ws.path)/cp4s-source"
+            - "$(workspaces.cp4s-ws.path)/cp4s-source"
         workspaces:
-          - name: ws
+          - name: cp4s-ws
     # - name: get-verify-info
     #   runAfter:
     #     - get-sources
