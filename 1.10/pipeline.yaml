@@ -49,23 +49,16 @@ spec:
 
             printf $email | tee $(results.output.path)
     - name: git-clone
-      params:
-        - name: url
-          value: https://github.com/cloud-native-toolkit/deployer-cp4s
-        - name: subdirectory
-          value: "cp4s-source"
-      workspaces:
-        - name: output
-          workspace: cp4s-ws
-      taskRef:
-        resolver: git
-        params:
-          - name: url
-            value: https://github.com/tektoncd/catalog.git
-          - name: revision
-            value: main
-          - name: pathInRepo
-            value: task/git-clone/0.9/git-clone.yaml
+      taskSpec:
+        steps:
+        - name: git-clone-step
+          image: alpine/git
+          args:
+            - clone
+            - "https://github.com/cloud-native-toolkit/deployer-cp4s.git"
+            - "$(workspaces.ws.path)/cp4s-source"
+        workspaces:
+          - name: ws
     # - name: get-verify-info
     #   runAfter:
     #     - get-sources
