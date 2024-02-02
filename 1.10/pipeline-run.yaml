@@ -1,8 +1,10 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  name: cp4s-deployer-run
+  generateName: cp4s-deployer-run
 spec:
+  timeouts:
+    pipeline: 6h0m0s
   pipelineRef:
     name: cp4s-deploy
   params:
