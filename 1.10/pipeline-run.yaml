@@ -1,9 +1,8 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  generateName: cp4s-deployer-run
+  name: cp4s-deployer-run
 spec:
-  timeout: 6h0m0s
   pipelineRef:
     name: cp4s-deploy
   params:
@@ -35,7 +34,4 @@ spec:
           storageClassName: ocs-storagecluster-cephfs
           volumeMode: Filesystem
         status: {}
-  podTemplate:
-    securityContext:
-      fsGroup: 65532
     
