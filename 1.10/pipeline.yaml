@@ -472,20 +472,29 @@ spec:
 
               mv tls.crt tls.crt.original
 
-              mv cert-01 tls.crt
+              mv cert-00 tls.crt
 
-              cat cert-00 > ca.crt
+              cat cert-01 > ca.crt
 
               ls -ltr
 
               oc -n ibm-common-services patch managementingress default --type merge --patch '{"spec":{"managementState":"Unmanaged"}}'
+
+              oc -n ibm-common-services get route cp-console -o jsonpath="{.spec.tls.destinationCACertificate}" > dest-ca.crt
+
+              HOSTNAME=$(oc -n ibm-common-services get route cp-console -o jsonpath="{.spec.host}")
+
+              oc -n ibm-common-services create route reencrypt cp-console --service=icp-management-ingress  --cert=./tls.crt  --key=./tls.key  --ca-cert=./ca.crt  --dest-ca-cert=./dest-ca.crt  --hostname=$HOSTNAME  --insecure-policy='Redirect'  --dry-run=true -o yaml  > cp-console.yaml
+              
+              oc -n ibm-common-services  apply -f cp-console.yaml
+
               echo "Updating common services' certs"
               oc -n ibm-common-services delete certificates.v1alpha1.certmanager.k8s.io route-cert
               oc -n ibm-common-services delete secret route-tls-secret
               oc -n ibm-common-services create secret generic route-tls-secret  --from-file=ca.crt=./ca.crt --from-file=tls.crt=./tls.crt --from-file=tls.key=./tls.key
 
               oc -n ibm-common-services delete secret ibmcloud-cluster-ca-cert
-              oc -n ibm-common-services create secret generic ibmcloud-cluster-ca-cert --from-file=ca.crt=./ca.crt --from-file=tls.crt=./tls.crt --from-file=tls.key=./tls.key
+              oc -n ibm-common-services create secret generic ibmcloud-cluster-ca-cert --from-file=ca.crt=./ca.crt
 
               oc -n ibm-common-services delete pod -l app=auth-idp
               oc -n ibm-common-services delete pod -l name=operand-deployment-lifecycle-manager
