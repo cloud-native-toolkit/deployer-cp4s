@@ -458,9 +458,45 @@ spec:
       params:
         - name: namespace
           value: "$(params.namespace)"
-      taskRef:
-        kind: Task
-        name: ibm-tls-certs
+      taskSpec:
+        params:
+          - name: namespace
+        steps:
+          - name: update-certs
+            image: quay.io/ibmtz/ibm-pak-ubi:latest
+            script: |
+              #!/usr/bin/env bash
+              oc extract secret/$(oc get ingresscontroller.operator default -n openshift-ingress-operator -o jsonpath='{.spec.defaultCertificate.name}') -n openshift-ingress --to=. --keys=tls.crt,tls.key --confirm
+              csplit -s -z -f cert- tls.crt '/-----BEGIN CERTIFICATE-----/'  '{*}'
+              ls -ltr
+
+              mv tls.crt tls.crt.original
+
+              mv cert-00 tls.crt
+
+              cat cert-01 > ca.crt
+
+              ls -ltr
+
+              echo "Updating common services' certs"
+              oc -n ibm-common-services delete certificates.v1alpha1.certmanager.k8s.io route-cert
+              oc -n ibm-common-services delete secret route-tls-secret
+              oc -n ibm-common-services create secret generic route-tls-secret  --from-file=ca.crt=./ca.crt --from-file=tls.crt=./tls.crt --from-file=tls.key=./tls.key
+
+              oc -n ibm-common-services delete secret ibmcloud-cluster-ca-cert
+              oc -n ibm-common-services create secret generic ibmcloud-cluster-ca-cert --from-file=ca.crt=./ca.crt --from-file=tls.crt=./tls.crt --from-file=tls.key=./tls.key
+
+              oc -n ibm-common-services delete pod -l app=auth-idp
+              oc -n ibm-common-services delete pod -l name=operand-deployment-lifecycle-manager
+
+              microdnf install rsync
+              rsync --version
+              PASSWORD=$($RANDOM | md5sum | head -c 20)
+              POD=$(oc get pod -n $(params.namespace) --no-headers -lrun=cp-serviceability | cut -d' ' -f1)
+              rsync --rsh='oc rsh -n $(params.namespace)' -av -c --inplace --partial --append --progress $POD:/opt/bin/linux/cpctl ./cpctl && chmod +x ./cpctl
+              mv cpctl /usr/local/bin
+              cpctl load -n $(params.namespace)
+              cpctl tools -n $(params.namespace) sync_cluster_cert --token $(oc whoami -t)
     - name: cp4s-to-verify
       when:
       - input: "$(params.verify-client-id)"
@@ -614,14 +650,14 @@ spec:
               POD=$(oc get pod -n $(params.namespace) --no-headers -lrun=cp-serviceability | cut -d' ' -f1)
               rsync --rsh='oc rsh -n $(params.namespace)' -av -c --inplace --partial --append --progress $POD:/opt/bin/linux/cpctl ./cpctl && chmod +x ./cpctl
               mv cpctl /usr/local/bin
-              cpctl load -n $(params.namespace)
+              cpctl load -n $(params.namespace)  
               cpctl tools deploy_openldap -n $(params.namespace) --token $(oc whoami -t) --operation install --ldap_usernames cp4s-demo --ldap_password $PASSWORD
               oc delete pod -lname=isc-entitlements -n $(params.namespace)
               echo "waiting for isc-entitlements pods to be deleted"
               sleep 20
               echo "waiting for isc-entitlements pods to be ready"
               oc wait pod -lname=isc-entitlements -n $(params.namespace) --for=condition=Ready --timeout=30m
-              cpctl remediation sync_ldap -n $(params.namespace)
+              cpctl remediation sync_ldap -n $(params.namespace) --token $(oc whoami -t)
               POD=$(oc get pods -n $(params.namespace) -lname=isc-entitlements --no-headers | grep -i running | head -1 | awk '{print $1}')
               oc exec $POD -n $(params.namespace) -- node ./utilities/setAdminUser.js cp4s-demo
               loginURL=$(oc get CP4SThreatManagement threatmgmt -n $(params.namespace) -o jsonpath='{.spec.basicDeploymentConfiguration.domain}')
