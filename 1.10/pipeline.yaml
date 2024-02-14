@@ -472,12 +472,13 @@ spec:
 
               mv tls.crt tls.crt.original
 
-              mv cert-00 tls.crt
+              mv cert-01 tls.crt
 
-              cat cert-01 > ca.crt
+              cat cert-00 > ca.crt
 
               ls -ltr
 
+              oc -n ibm-common-services patch managementingress default --type merge --patch '{"spec":{"managementState":"Unmanaged"}}'
               echo "Updating common services' certs"
               oc -n ibm-common-services delete certificates.v1alpha1.certmanager.k8s.io route-cert
               oc -n ibm-common-services delete secret route-tls-secret
@@ -488,10 +489,10 @@ spec:
 
               oc -n ibm-common-services delete pod -l app=auth-idp
               oc -n ibm-common-services delete pod -l name=operand-deployment-lifecycle-manager
+              
+              oc wait --for condition=ready --timeout=900s pod -l app=auth-idp -n ibm-common-services
 
               microdnf install rsync
-              rsync --version
-              PASSWORD=$($RANDOM | md5sum | head -c 20)
               POD=$(oc get pod -n $(params.namespace) --no-headers -lrun=cp-serviceability | cut -d' ' -f1)
               rsync --rsh='oc rsh -n $(params.namespace)' -av -c --inplace --partial --append --progress $POD:/opt/bin/linux/cpctl ./cpctl && chmod +x ./cpctl
               mv cpctl /usr/local/bin
