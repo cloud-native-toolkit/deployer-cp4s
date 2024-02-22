@@ -404,7 +404,7 @@ spec:
         - name: SCRIPT
           value: |-
               oc apply -f - <<EOF 
-              apiVersion: isc.ibm.com/v1
+              apiVersion: isc.ibm.com/v2
               kind: CP4SThreatManagement
               metadata:
                    name: threatmgmt
