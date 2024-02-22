@@ -410,7 +410,8 @@ spec:
                    name: threatmgmt
                    namespace: $(params.namespace)
               spec:
-                   acceptLicense: true
+                   license:
+                      accept: true
                    basicDeploymentConfiguration:
                       adminUser: $(tasks.get-admin-email.results.output)
                       domain: ""
