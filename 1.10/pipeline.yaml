@@ -376,6 +376,7 @@ spec:
                    sourceNamespace: openshift-marketplace
               EOF
     - name: wait-for-cp4s-operator
+      retries: 5
       runAfter:
         - install-cp4s-subscription
       taskRef:
@@ -395,6 +396,7 @@ spec:
               done
               echo "Operator started!"
     - name: install-cp4s-threat-management
+      retries: 5
       runAfter:
         - wait-for-cp4s-operator
       taskRef:
@@ -432,9 +434,10 @@ spec:
                        deployThreatInvestigator: true
               EOF
     - name: wait-for-threat-management
+      retries: 5
       runAfter:
         - install-cp4s-threat-management
-      timeout: "3h15m"
+      timeout: "5h00m"
       taskRef:
         kind: Task
         name: ibm-pak
@@ -452,6 +455,16 @@ spec:
               done
 
               echo "CP4S installed!"
+    - name: update-common-services-certs
+      retries: 5
+      runAfter:
+        - wait-for-threat-management
+      params:
+        - name: namespace
+          value: "$(params.namespace)"
+      taskRef:
+        kind: Task
+        name: ibm-tls-certs
     - name: update-certs
       runAfter:
         - wait-for-threat-management
@@ -479,35 +492,12 @@ spec:
 
               ls -ltr
 
-              oc -n ibm-common-services patch managementingress default --type merge --patch '{"spec":{"managementState":"Unmanaged"}}'
-
-              oc -n ibm-common-services get route cp-console -o jsonpath="{.spec.tls.destinationCACertificate}" > dest-ca.crt
-
-              HOSTNAME=$(oc -n ibm-common-services get route cp-console -o jsonpath="{.spec.host}")
-
-              oc -n ibm-common-services create route reencrypt cp-console --service=icp-management-ingress  --cert=./tls.crt  --key=./tls.key  --ca-cert=./ca.crt  --dest-ca-cert=./dest-ca.crt  --hostname=$HOSTNAME  --insecure-policy='Redirect'  --dry-run=true -o yaml  > cp-console.yaml
-              
-              oc -n ibm-common-services  apply -f cp-console.yaml
-
-              echo "Updating common services' certs"
-              oc -n ibm-common-services delete certificates.v1alpha1.certmanager.k8s.io route-cert
-              oc -n ibm-common-services delete secret route-tls-secret
-              oc -n ibm-common-services create secret generic route-tls-secret  --from-file=ca.crt=./ca.crt --from-file=tls.crt=./tls.crt --from-file=tls.key=./tls.key
-
-              oc -n ibm-common-services delete secret ibmcloud-cluster-ca-cert
-              oc -n ibm-common-services create secret generic ibmcloud-cluster-ca-cert --from-file=ca.crt=./ca.crt
-
-              oc -n ibm-common-services delete pod -l app=auth-idp
-              oc -n ibm-common-services delete pod -l name=operand-deployment-lifecycle-manager
-              
-              oc wait --for condition=ready --timeout=900s pod -l app=auth-idp -n ibm-common-services
-
               microdnf install rsync
               POD=$(oc get pod -n $(params.namespace) --no-headers -lrun=cp-serviceability | cut -d' ' -f1)
               rsync --rsh='oc rsh -n $(params.namespace)' -av -c --inplace --partial --append --progress $POD:/opt/bin/linux/cpctl ./cpctl && chmod +x ./cpctl
               mv cpctl /usr/local/bin
               cpctl load -n $(params.namespace)
-              cpctl tools -n $(params.namespace) sync_cluster_cert --token $(oc whoami -t)
+              cpctl tools update_cert --key "$(cat tls.key)" --cert "$(cat tls.crt)" --token "$(oc whoami -t)" -n $(params.namespace)
     - name: cp4s-to-verify
       when:
       - input: "$(params.verify-client-id)"
@@ -645,6 +635,7 @@ spec:
           value: "$(params.namespace)"
       runAfter:
         - update-certs
+        - update-common-services-certs
       taskSpec:
         params:
           - name: namespace

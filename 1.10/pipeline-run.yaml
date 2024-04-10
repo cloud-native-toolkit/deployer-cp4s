@@ -4,7 +4,7 @@ metadata:
   generateName: cp4s-deployer-run
 spec:
   timeouts:
-    pipeline: 6h0m0s
+    pipeline: 7h0m0s
   pipelineRef:
     name: cp4s-deploy
   params:
