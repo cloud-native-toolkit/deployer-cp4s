@@ -29,11 +29,10 @@ spec:
           creationTimestamp: null
         spec:
           accessModes:
-            - ReadWriteMany
+            - ReadWriteOnce
           resources:
             requests:
               storage: 1Gi
-          storageClassName: ocs-storagecluster-cephfs
           volumeMode: Filesystem
         status: {}
     
